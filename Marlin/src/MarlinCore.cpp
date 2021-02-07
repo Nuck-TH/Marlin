@@ -42,6 +42,7 @@
 #include "module/configuration_store.h"
 #include "module/printcounter.h" // PrintCounter or Stopwatch
 #include "feature/closedloop.h"
+#include "feature/babystep.h"
 
 #include "HAL/shared/Delay.h"
 
@@ -184,6 +185,8 @@
 const char NUL_STR[] PROGMEM = "",
            M112_KILL_STR[] PROGMEM = "M112 Shutdown",
            G28_STR[] PROGMEM = "G28",
+           G11_STR[] PROGMEM = "G11",
+           G10_STR[] PROGMEM = "G10",
            M21_STR[] PROGMEM = "M21",
            M23_STR[] PROGMEM = "M23 %s",
            M24_STR[] PROGMEM = "M24",
@@ -201,6 +204,26 @@ const char NUL_STR[] PROGMEM = "",
            SP_Y_LBL[] PROGMEM = " Y:",
            SP_Z_LBL[] PROGMEM = " Z:",
            SP_E_LBL[] PROGMEM = " E:";
+
+//GLOSEX mod for PICO
+
+// LED status value
+const uint8_t PRG0 = 0, PRG25 = 33, PRG50 = 66, PRG75 = 99, PRG99 = 100; //progress LED unit
+float LED_STATS = 0; //status code
+int LT = 255; //off
+int LO = 0; //on
+millis_t blkt = millis();
+constexpr millis_t blkd = 800UL;
+
+// Button time
+const uint8_t SBT = 1 //short minimum cycle
+, LBT = 2 //short maximum cycle = long minimum cycle
+, LBM = 100; // long maximum cycle
+//GLOSEX MOD end
+
+// temp to show
+const uint8_t t0 = 20, t50 = 80, t100 = 130, t150 = 190, t200 = 220;
+// GLOSEX MOD end
 
 MarlinState marlin_state = MF_INITIALIZING;
 
@@ -438,6 +461,7 @@ void startOrResumeJob() {
   inline void finishSDPrinting() {
     if (queue.enqueue_one_P(PSTR("M1001")))
       marlin_state = MF_RUNNING;
+      blkt = millis();
   }
 
 #endif // SDSUPPORT
@@ -526,19 +550,216 @@ inline void manage_inactivity(const bool ignore_stepper_queue=false) {
     }
   #endif
 
+//MOD by GLOSEX for PICO
   #if HAS_HOME
     // Handle a standalone HOME button
-    constexpr millis_t HOME_DEBOUNCE_DELAY = 1000UL;
+    constexpr millis_t HOME_DEBOUNCE_DELAY = 500UL; // short key delay
     static millis_t next_home_key_ms; // = 0
+    static int ctime;
     if (!IS_SD_PRINTING() && !READ(HOME_PIN)) { // HOME_PIN goes LOW when pressed
       const millis_t ms = millis();
       if (ELAPSED(ms, next_home_key_ms)) {
         next_home_key_ms = ms + HOME_DEBOUNCE_DELAY;
-        LCD_MESSAGEPGM(MSG_AUTO_HOME);
-        queue.enqueue_now_P(G28_STR);
+        ctime = ctime + 1;
+      }
+    }
+
+    // check ctime and action
+    if (!IS_SD_PRINTING() && READ(HOME_PIN)){
+      if (WITHIN(ctime, SBT, LBT)){    // short press - cancel or stop all movement and heating.
+        if (printingIsPaused()){
+          queue.clear();
+          card.flag.abort_sd_printing = 1;
+          marlin_state = MF_SD_COMPLETE;
+          blkt = millis();
+        }
+        else {
+          LED_STATS = 2;
+          disable_all_steppers();
+          thermalManager.disable_all_heaters();
+        }
+        ctime = 0;
+      }
+      if (WITHIN(ctime, LBT, LBM)){      //Long press - homming
+        LED_STATS = 3;
+        queue.clear();
+        parser.reset();
+        queue.enqueue_now_P(G28_STR); //homing
+        thermalManager.disable_all_heaters();
+        queue.enqueue_now_P("M18"); //disable all stepper
+        ctime = 0;
       }
     }
   #endif
+  #if HAS_PLUSK
+    // Handle a standalone PLUS button
+    constexpr millis_t PLUSK_DEBOUNCE_DELAY = 500UL; // short key delay
+    static millis_t next_plusk_key_ms; // = 0
+    static int cptime;
+    if (!IS_SD_PRINTING() && !READ(PLUSK_PIN) && !IS_SD_PAUSED()) { // PLUSK_PIN goes LOW when pressed
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_plusk_key_ms)) {
+        next_plusk_key_ms = ms + PLUSK_DEBOUNCE_DELAY;
+        cptime = cptime + 1;
+      }
+    }
+    if (IS_SD_PAUSED() && !READ(PLUSK_PIN)) { // PLUSK_PIN goes LOW when pressed
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_plusk_key_ms)) {
+        next_plusk_key_ms = ms + PLUSK_DEBOUNCE_DELAY;
+        LED_STATS = 1;
+        cptime = 0;
+        destination[E_AXIS] += 2;// feed the filament??
+        prepare_internal_move_to_destination(feedrate_mm_s);
+      }
+    }
+    if (IS_SD_PRINTING() && !READ(PLUSK_PIN)) { // PLUSK_PIN babystepping lift while SD printing
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_plusk_key_ms)) {
+        next_plusk_key_ms = ms + PLUSK_DEBOUNCE_DELAY;
+        cptime = 0;
+        babystep.add_mm(Z_AXIS, 0.02);
+      }
+    }
+
+    // check cptime and action
+    if (!IS_SD_PRINTING() && READ(PLUSK_PIN) && !IS_SD_PAUSED()){
+      if (WITHIN(cptime, SBT, LBT)){    // short press
+        if (all_axes_known()) {
+          if (thermalManager.degHotend(active_extruder) < EXTRUDER_RUNOUT_MINTEMP) {
+            LED_STATS = 1;
+            thermalManager.setTargetHotend(200, 0);
+          }
+          if (thermalManager.degHotend(active_extruder) > EXTRUDER_RUNOUT_MINTEMP ){
+            LED_STATS = 1;
+            queue.enqueue_now_P(PSTR("G92 E0"));
+            queue.enqueue_now_P(PSTR("G1 F90 E50"));
+          }
+        }
+        else {
+          LED_STATS = 3;
+          queue.enqueue_now_P(G28_STR); //homing
+        }
+        cptime = 0;
+      }
+      if (WITHIN(cptime, LBT, LBM)){      //Long press
+        if (all_axes_known()) {
+          LED_STATS = 1;
+          destination[Z_AXIS] += 10;// Z Axis Move??
+          prepare_internal_move_to_destination(feedrate_mm_s);
+        }
+        else {
+          LED_STATS = 3;
+          queue.enqueue_now_P(G28_STR); //homing
+        }
+        cptime = 0;
+      }
+    }
+
+  #endif
+
+  #if HAS_MINUSK
+    // Handle a standalone MINUS button
+    constexpr millis_t MINUSK_DEBOUNCE_DELAY = 500UL;
+    static millis_t next_MINUSK_key_ms; // = 0
+    static int cmtime;
+    if (!IS_SD_PRINTING() && !READ(MINUSK_PIN) && !IS_SD_PAUSED()) { // MINUSK_PIN goes LOW when pressed
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_MINUSK_key_ms)) {
+        next_MINUSK_key_ms = ms + MINUSK_DEBOUNCE_DELAY;
+        cmtime = cmtime + 1;
+      }
+    }
+    if (IS_SD_PAUSED() && !READ(MINUSK_PIN)) { // MINUSK_PIN goes LOW when pressed
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_MINUSK_key_ms)) {
+        next_MINUSK_key_ms = ms + MINUSK_DEBOUNCE_DELAY;
+        LED_STATS = 2;
+        cmtime = 0;
+        destination[E_AXIS] -= 10;// feed the filament??
+        feedrate_mm_s = 40 ;
+        prepare_internal_move_to_destination(feedrate_mm_s);
+      }
+    }
+    if (IS_SD_PRINTING() && !READ(MINUSK_PIN)) { // MINUS_PIN babystepping down while SD printing
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_MINUSK_key_ms)) {
+        next_MINUSK_key_ms = ms + MINUSK_DEBOUNCE_DELAY;
+        cptime = 0;
+        babystep.add_mm(Z_AXIS, -0.02);
+      }
+    }
+
+    // check cmtime and action
+    if (!IS_SD_PRINTING() && READ(MINUSK_PIN) && !IS_SD_PAUSED()){
+      if (WITHIN(cmtime, SBT, LBT)){    // short press
+        if (thermalManager.degHotend(active_extruder) < EXTRUDER_RUNOUT_MINTEMP) {
+          LED_STATS = 2;
+          thermalManager.setTargetHotend(200, 0);
+        }
+        if (thermalManager.degHotend(active_extruder) > EXTRUDER_RUNOUT_MINTEMP){
+          LED_STATS = 2;
+          queue.enqueue_now_P(PSTR("G92 E0"));
+          queue.enqueue_now_P(PSTR("G10")); // G10 for firmware retraction
+          thermalManager.disable_all_heaters();
+        }
+        cmtime = 0;
+      }
+      if (WITHIN(cmtime, LBT, LBM)){      //Long press
+        if (all_axes_known()) {
+          LED_STATS = 2;
+          destination[Z_AXIS] -= 10;// Z Axis Move??
+          feedrate_mm_s = 40 ;
+          prepare_internal_move_to_destination(feedrate_mm_s);
+        }
+        else {
+          LED_STATS = 4;
+          queue.enqueue_now_P(G28_STR); //homing
+        }
+        cmtime = 0;
+      }
+    }
+  #endif
+
+
+    #if HAS_STARTK
+    // Handle a standalone START button
+    constexpr millis_t STARTK_DEBOUNCE_DELAY = 1000UL;
+    static millis_t next_STARTK_key_ms; // = 0
+    if (!IS_SD_PRINTING() && !READ(STARTK_PIN) && !IS_SD_PAUSED()) { // START_PIN goes LOW when pressed
+      const millis_t ms = millis();
+      if (ELAPSED(ms, next_STARTK_key_ms)) {
+        card.mount();
+        if (!card.isMounted()){
+          next_STARTK_key_ms = ms + STARTK_DEBOUNCE_DELAY;
+          queue.enqueue_now_P(PSTR("G1 Z15 F1200")); //"G1 Z15 F1200"
+          marlin_state = MF_SD_COMPLETE;
+        }
+        else {
+          next_STARTK_key_ms = ms + STARTK_DEBOUNCE_DELAY;
+          LED_STATS = 0;
+          uint16_t NrPrint = 0; //position to print in sorted order
+          NrPrint = card.get_num_Files();
+          card.selectFileByIndex(NrPrint-1);
+          card.openAndPrintFile(card.filename);
+        }
+      }
+    }
+    if (IS_SD_PRINTING() && !READ(STARTK_PIN)) {
+      if (ELAPSED(ms, next_STARTK_key_ms)) {
+        next_STARTK_key_ms = ms + STARTK_DEBOUNCE_DELAY;
+        card.flag.sdprinting = false;
+      }
+    }
+    if (IS_SD_PAUSED() && !READ(STARTK_PIN)) {
+      if (ELAPSED(ms, next_STARTK_key_ms)) {
+        next_STARTK_key_ms = ms + STARTK_DEBOUNCE_DELAY;
+        card.flag.sdprinting = true;
+      }
+    }
+
+  #endif
+  //MOD end
 
   #if ENABLED(USE_CONTROLLER_FAN)
     controllerFan.update(); // Check if fan should be turned on to cool stepper drivers down
@@ -651,7 +872,37 @@ void idle(
   #if ENABLED(ADVANCED_PAUSE_FEATURE)
     bool no_stepper_sleep/*=false*/
   #endif
+
+
 ) {
+  // Mod by GloSex
+  if (!card.isPrinting()){
+    millis_t crnt_t = millis();
+    if (!queue.has_commands_queued() && !thermalManager.isHeatingHotend(0) && !stepper.axis_is_moving(X_AXIS) && !stepper.axis_is_moving(Y_AXIS) && !stepper.axis_is_moving(Z_AXIS)) LED_STATS = 0; 
+    if (WITHIN(crnt_t, blkt, blkt + 1.5*blkd)){
+      if (LED_STATS == 0) leds.set_color(LO,LT,LT,LT); //print led
+      if (LED_STATS == 1) leds.set_color(LT,LT,LO,LT); //plus led
+      if (LED_STATS == 2) leds.set_color(LT,LO,LT,LT); //minus led
+      if (LED_STATS == 3) leds.set_color(LT,LT,LT,LO); //home led
+    }
+    if (WITHIN(crnt_t, blkt + 1.5*blkd, blkt + 2*blkd)) leds.set_color(LT,LT,LT,LT);
+    if ((thermalManager.degHotend(active_extruder) > t0) && (WITHIN(crnt_t, blkt + 2*blkd, blkt + 3.5*blkd))) {
+      if(WITHIN(thermalManager.degHotend(active_extruder), t0, t50)) leds.set_color(LO, LT, LT, LT);
+      if(WITHIN(thermalManager.degHotend(active_extruder), t50, t100)) leds.set_color(LO, LT, LO, LT);
+      if(WITHIN(thermalManager.degHotend(active_extruder), t100, t150)) leds.set_color(LO, LO, LO, LT);
+      if(WITHIN(thermalManager.degHotend(active_extruder), t150, t200)) leds.set_color(LO, LO, LO, LO);
+    }
+    if (WITHIN(crnt_t, blkt + 3.5*blkd, blkt + 4*blkd)) leds.set_color(LT,LT,LT,LT);
+    if (WITHIN(crnt_t, blkt + 4*blkd, blkt + 5*blkd)) blkt = millis();
+  }
+  if (card.isPrinting()){
+    if (WITHIN(card.percentDone(), PRG0 ,PRG25)) leds.set_color(LO,LT,LT,LT);
+    if (WITHIN(card.percentDone(), PRG25 ,PRG50)) leds.set_color(LO,LT,LO,LT);
+    if (WITHIN(card.percentDone(), PRG50 ,PRG75)) leds.set_color(LO,LO,LO,LT);
+    if (WITHIN(card.percentDone(), PRG75 ,PRG99)) leds.set_color(LO,LO,LO,LO);
+  }
+  // Mod end
+
   #if ENABLED(POWER_LOSS_RECOVERY) && PIN_EXISTS(POWER_LOSS)
     recovery.outage();
   #endif
@@ -1045,6 +1296,20 @@ void setup() {
     SET_INPUT_PULLUP(HOME_PIN);
   #endif
 
+// MOD by GLOSEX for PICO
+    #if HAS_PLUSK
+    SET_INPUT_PULLUP(PLUSK_PIN);
+  #endif
+
+  #if HAS_MINUSK
+    SET_INPUT_PULLUP(MINUSK_PIN);
+  #endif
+
+  #if HAS_STARTK
+    SET_INPUT_PULLUP(STARTK_PIN);
+  #endif
+// MOD end
+
   #if PIN_EXISTS(STAT_LED_RED)
     OUT_WRITE(STAT_LED_RED_PIN, LOW); // OFF
   #endif
@@ -1162,19 +1427,6 @@ void setup() {
   SETUP_LOG("setup() completed.");
 }
 
-/**
- * The main Marlin program loop
- *
- *  - Call idle() to handle all tasks between G-code commands
- *      Note that no G-codes from the queue can be executed during idle()
- *      but many G-codes can be called directly anytime like macros.
- *  - Check whether SD card auto-start is needed now.
- *  - Check whether SD print finishing is needed now.
- *  - Run one G-code command from the immediate or main command queue
- *    and open up one space. Commands in the main queue may come from sd
- *    card, host, or by direct injection. The queue will continue to fill
- *    as long as idle() or manage_inactivity() are being called.
- */
 void loop() {
   do {
     idle();
@@ -1188,6 +1440,7 @@ void loop() {
     queue.advance();
 
     endstops.event_handler();
+
 
   } while (ENABLED(__AVR__)); // Loop forever on slower (AVR) boards
 }

@@ -159,7 +159,7 @@
 
 #define BOARD_SANGUINOLOLU_11         1500  // Sanguinololu < 1.2
 #define BOARD_SANGUINOLOLU_12         1501  // Sanguinololu 1.2 and above
-#define BOARD_MELZI                   1502  // Melzi
+#define BOARD_PICO                    1502  // SONDORI PICO BOARD
 #define BOARD_MELZI_MAKR3D            1503  // Melzi with ATmega1284 (MaKr3d version)
 #define BOARD_MELZI_CREALITY          1504  // Melzi Creality3D board (for CR-10 etc)
 #define BOARD_MELZI_MALYAN            1505  // Melzi Malyan M150 board

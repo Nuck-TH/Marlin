@@ -278,8 +278,8 @@
   #include "sanguino/pins_SANGUINOLOLU_11.h"    // ATmega644P, ATmega1284P                env:sanguino644p env:sanguino1284p
 #elif MB(SANGUINOLOLU_12)
   #include "sanguino/pins_SANGUINOLOLU_12.h"    // ATmega644P, ATmega1284P                env:sanguino644p env:sanguino1284p
-#elif MB(MELZI)
-  #include "sanguino/pins_MELZI.h"              // ATmega644P, ATmega1284P                env:sanguino644p env:sanguino1284p
+#elif MB(PICO)
+  #include "sanguino/pins_PICO.h"                        // ATmega644P, ATmega1284P                env:sanguino644p env:sanguino1284p
 #elif MB(MELZI_MAKR3D)
   #include "sanguino/pins_MELZI_MAKR3D.h"       // ATmega644P, ATmega1284P                env:sanguino644p env:sanguino1284p
 #elif MB(MELZI_CREALITY)

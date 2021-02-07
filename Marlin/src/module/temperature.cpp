@@ -425,7 +425,7 @@ volatile bool Temperature::raw_temps_ready = false;
     wait_for_heatup = true; // Can be interrupted with M108
     #if ENABLED(PRINTER_EVENT_LEDS)
       const float start_temp = GHV(temp_bed.celsius, temp_hotend[heater].celsius);
-      LEDColor color = ONHEATINGSTART();
+      //LEDColor color = ONHEATINGSTART(); // Mod by GloSex for the independent LED control
     #endif
 
     #if ENABLED(NO_FAN_SLOWING_IN_PID_TUNING)
@@ -620,7 +620,7 @@ volatile bool Temperature::raw_temps_ready = false;
         }
 
         #if ENABLED(PRINTER_EVENT_LEDS)
-          printerEventLEDs.onPidTuningDone(color);
+          //printerEventLEDs.onPidTuningDone(color); Mod by GloSex
         #endif
         #if ENABLED(EXTENSIBLE_UI)
           ExtUI::onPidTuning(ExtUI::result_t::PID_DONE);
@@ -634,7 +634,7 @@ volatile bool Temperature::raw_temps_ready = false;
     disable_all_heaters();
 
     #if ENABLED(PRINTER_EVENT_LEDS)
-      printerEventLEDs.onPidTuningDone(color);
+      //printerEventLEDs.onPidTuningDone(color); //Mod by GloSex
     #endif
     #if ENABLED(EXTENSIBLE_UI)
       ExtUI::onPidTuning(ExtUI::result_t::PID_DONE);

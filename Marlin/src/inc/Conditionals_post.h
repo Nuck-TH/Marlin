@@ -1539,6 +1539,17 @@
 #if PIN_EXISTS(HOME)
   #define HAS_HOME 1
 #endif
+// MOD by NJK for PICO
+#if PIN_EXISTS(STARTK)
+  #define HAS_STARTK 1
+#endif
+#if PIN_EXISTS(PLUSK)
+  #define HAS_PLUSK 1
+#endif
+#if PIN_EXISTS(MINUSK)
+  #define HAS_MINUSK 1
+#endif
+// MOD end
 #if PIN_EXISTS(KILL)
   #define HAS_KILL 1
 #endif
